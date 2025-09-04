@@ -1,8 +1,15 @@
 """ Test of the game engine """
+import os
+import sys
+
+# add the Libs directory to the system path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), 'Libs'))
+
 from Libs.engine import Engine
 from Libs.entity import Entity
 from Libs.shape import Circle, Rectangle
 from Libs.vector import Vector2
+
 
 def main():
     """ Main function to set up and run the physics engine simulation. """
