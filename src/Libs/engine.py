@@ -1,6 +1,6 @@
-""" engine.py """
+""" A simple physics engine simulation """
 from threading import Thread, Event
-from queue import Queue
+from queue import Queue, Empty
 from typing import List
 from entity import Entity
 
@@ -8,65 +8,78 @@ from entity import Entity
 class Engine:
     """A simple physics engine simulation class."""
     GRAVITY = 9.81  # m/s^2
-    thread_count = 4  # The number of threads to use for processing
+    thread_count = 4
     stop_event = Event()
 
-    def __init__(self):
-        self.entities = Queue()  # Queue to hold entities for processing
-        self.time_step = 0.016
+    def __init__(self, time_step: float = 0.016):
+        self.entities: List[Entity] = []
+        self.queue: Queue[Entity | None] = Queue()
+        self.time_step = time_step
         self.current_time = 0.0
+        self.threads: List[Thread] = []
 
     def worker(self):
-        """Worker function to update a list of entities."""
+        """Worker function to update entities."""
         while not self.stop_event.is_set():
-            # If not doing anything get the Entity from the queue
-            entity = self.entities.get()
-            if entity is None and not isinstance(entity, Entity):
+            try:
+                entity = self.queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            if entity is None or not isinstance(entity, Entity):
+                self.queue.task_done()
                 break
 
-            if getattr(entity.shape, "static", False):
-                # Apply gravity to the entity's velocity
-                entity.velocity.add(y=self.GRAVITY * self.time_step)
+            # Apply gravity if not static
+            if not getattr(entity.shape, "static", False):
+                entity.velocity.add(0, self.GRAVITY * self.time_step)
 
-            # Collision handling
+            # Handle collisions
             self.collision(entity)
 
+            # Update position
             entity.update()
-            self.entities.task_done()
+
+            self.queue.task_done()
 
     def run(self) -> None:
         """Run the physics engine."""
-        threads: List[Thread] = []
+        # Start worker threads
         for _ in range(self.thread_count):
-            thread = Thread(target=self.worker)
-            thread.start()
-            threads.append(thread)
+            t = Thread(target=self.worker, daemon=True)
+            t.start()
+            self.threads.append(t)
 
         try:
-            while True:
+            while not self.stop_event.is_set():
                 self.current_time += self.time_step
-                self.entities.join()  # Wait for all entities to be processed
+                # Dispatch entities to workers
+                for entity in self.entities:
+                    self.queue.put(entity)
+
+                self.queue.join()
         except KeyboardInterrupt:
-            self.stop_event.set()
-            for _ in threads:
-                self.entities.put(None)
+            self.stop()
+
+    def stop(self) -> None:
+        """Stop the physics engine."""
+        self.stop_event.set()
+        for _ in self.threads:
+            self.queue.put(None)
+        for t in self.threads:
+            t.join()
 
     def add_entity(self, entity: Entity) -> None:
-        """Add an entity to the engine."""
-        if isinstance(entity, Entity):
-            self.entities.put(entity)
-        else:
-            raise TypeError(
-                "Only Entity instances can be added to the engine.")
+        """Register an entity with the engine."""
+        self.entities.append(entity)
 
     def collision(self, entity: Entity) -> None:
-        """Handle collisions between entities."""
-        for other in list(self.entities.queue):
-            if other is entity or not isinstance(other, Entity):
+        """Handle collisions between entities (very simplified)."""
+        for other in self.entities:
+            if other is entity:
                 continue
             if entity.shape.intersects(other.shape):
-                # Simple elastic bounce on y-axis
-                entity.velocity.y *= -1 * \
-                    (entity.mass / (entity.mass + other.mass))
-                other.velocity.y *= -1 * \
-                    (other.mass / (entity.mass + other.mass))
+                # Simple elastic bounce along y-axis
+                total_mass = entity.mass + other.mass
+                entity.velocity.y *= -other.mass / total_mass
+                other.velocity.y *= -entity.mass / total_mass
